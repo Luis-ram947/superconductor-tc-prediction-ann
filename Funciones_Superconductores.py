@@ -48,6 +48,8 @@ def mostrar_resultados(y_true, y_pred, titulo="Conjunto"):
 
     resid = y_pred - y_true
 
+    posicion = np.arange(len(y_true))
+
     tabla = pd.DataFrame({
         "Tc_real":  y_true,
         "Tc_pred":  y_pred,
@@ -63,7 +65,7 @@ def mostrar_resultados(y_true, y_pred, titulo="Conjunto"):
     plt.scatter(y_true, y_pred, s=10, alpha=0.5)
     plt.plot(lims, lims, '--', lw=1)
     plt.xlim(lims); plt.ylim(lims)
-    plt.xlabel("Tc real (K)"); plt.ylabel("Tc predicho (K)")
+    plt.xlabel("Tc real(K)"); plt.ylabel("Tc predicha (K)")
     plt.title(f"Paridad — {titulo}")
     plt.tight_layout(); plt.show()
 
@@ -72,6 +74,15 @@ def mostrar_resultados(y_true, y_pred, titulo="Conjunto"):
     plt.xlabel("Residual (K)"); plt.ylabel("Frecuencia")
     plt.title(f"Residuales — {titulo}")
     plt.tight_layout(); plt.show()
+    plt.tight_layout(); plt.show()
+
+    # plt.figure(figsize=(5.2,5.2))
+    # plt.scatter( posicion,y_true, s=10, alpha=0.5, label = "Tc real")
+    # plt.scatter( posicion,y_pred, s=10, alpha=0.5, label = "Tc predicha") 
+    # plt.xlabel("Posicion"); plt.ylabel("Tc (K)")
+    # plt.legend()
+    # plt.tight_layout(); plt.show()
+
     
 def Eliminar_Comp_repetidas (X,y,keep="first"):
     # hago una copia para no trabajar con los datos originales
@@ -111,5 +122,48 @@ def Filtro_mejores (X,y_real,y_pred,tol,return_pandas=True):
 
     return X_best, y_best, y_best_p
     
+# def Filtro_mejores (X, y_real, y_pred, tol=4, top_frac=0.15, return_pandas=True):
+#         #_con_rescate_tc_alta
+#         X_is_df = isinstance(X, pd.DataFrame)
+#         y_is_series = isinstance(y_real, pd.Series)
+
+#         X_arr = X.values if X_is_df else np.asarray(X)
+#         y_arr = y_real.values if y_is_series else np.asarray(y_real)
+#         ypred_arr = np.asarray(y_pred)
+
+#         if ypred_arr.shape[0] != X_arr.shape[0] or y_arr.shape[0] != X_arr.shape[0]:
+#             raise ValueError("Dimensiones no coinciden entre X, y_real y y_pred.")
+
+#         # 1) máscara original por error
+#         mask_tol = np.abs(y_arr - ypred_arr) <= tol
+
+#         # 2) rescate: top_frac de Tc más altos (por y_real)
+#         n = len(y_arr)
+#         k = max(1, int(np.ceil(top_frac * n)))
+#         idx_top = np.argpartition(y_arr, -k)[-k:]  # índices de top Tc
+#         mask_top = np.zeros(n, dtype=bool)
+#         mask_top[idx_top] = True
+
+#         # 3) unión: buenos por tol O top Tc
+#         mask = mask_tol | mask_top
+
+#         if return_pandas and X_is_df:
+#             X_best = X.iloc[mask]
+#             y_best = (y_real.iloc[mask] if y_is_series else pd.Series(y_arr[mask], index=X_best.index, name="y"))
+#             y_best_p = pd.Series(ypred_arr[mask], index=X_best.index, name="y_pred")
+#         else:
+#             X_best = X_arr[mask]
+#             y_best = y_arr[mask]
+#             y_best_p = ypred_arr[mask]
+
+#         return X_best, y_best, y_best_p
+# trabajar con la ultima def
+
+def histograma(y, ylabel = ""):
+    plt.hist(y, bins=20, alpha=0.9)
+    plt.xlabel(ylabel); plt.ylabel("Frecuencia")
+    plt.tight_layout(); plt.show()
     
+    
+
     
