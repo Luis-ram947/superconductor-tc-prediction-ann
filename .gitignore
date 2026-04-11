@@ -1,3 +1,5 @@
 Data_base_supercond.csv
 pycache/
 *.pyc
+*.pkl
+models/
