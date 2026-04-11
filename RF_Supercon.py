@@ -13,8 +13,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
-import inverse_desing as ID #ChemDomain, build_domain_from_dataset
-from scipy.optimize import differential_evolution
 import sys
 import joblib
 # Hola
