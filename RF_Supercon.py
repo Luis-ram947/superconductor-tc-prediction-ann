@@ -14,9 +14,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.base import clone
 import inverse_desing as ID #ChemDomain, build_domain_from_dataset
+from scipy.optimize import differential_evolution
+import sys
+import joblib
 # Hola
 # ===========================================================
 CSV_PATH = "Data_base_supercond.csv"
+
+X_desc = pd.read_csv("X_desc_magpie.csv")
+y_desc = pd.read_csv("y_Tc.csv").iloc[:, 0]
 
 
 
@@ -26,18 +32,37 @@ CSV_PATH = "Data_base_supercond.csv"
 Xn,yn,df = FSC.Normalizar(CSV_PATH)
 
 
+
 # FUNCIÓN 2: ELIMINAR COMPOSICIONES REPETIDAS 
 # ===========================================================
 X,y = FSC.Eliminar_Comp_repetidas(Xn,yn)
+print(list(X.columns))
+print("Ag" in X.columns)
+print
 
-FSC.histograma(y,"T(K)")
+sys.exit()
+
+#FSC.histograma(y,"T(K)")
 print(X.shape)
 print(max(y))
 
-# SPLIT DE LOS DATOS 
-#============================================================
-X_train, X_test, y_train, y_test = train_test_split(
-X, y, test_size=0.2, random_state=42)
+
+idx = np.arange(len(X))
+#sys.exit()
+
+idx_train, idx_test = train_test_split(idx, test_size=0.2, random_state=42)
+
+# SPLIT DE LOS DATOS  de composiciones
+X_train = X.iloc[idx_train]
+X_test  = X.iloc[idx_test]
+y_train = y.iloc[idx_train]
+y_test  = y.iloc[idx_test]
+
+# Aplicas LOS MISMOS índices a descriptores
+X_train_desc = X_desc.iloc[idx_train]
+X_test_desc  = X_desc.iloc[idx_test]
+y_train_desc = y_desc.iloc[idx_train]
+y_test_desc  = y_desc.iloc[idx_test]
 
 
         
@@ -58,145 +83,94 @@ rf = Pipeline(steps=[
                 ))
             ])
         
+
+rf_desc = Pipeline(steps=[
+                ("imp", SimpleImputer(strategy="median")),
+                ("rf", RandomForestRegressor(
+                    n_estimators=600,
+                    max_depth=None,
+                    min_samples_leaf=5,
+                    max_features=0.2,
+                    bootstrap=True,
+                    oob_score=True,        
+                    n_jobs=-1,
+                    random_state=20,
+                    criterion="squared_error",
+                ))
+            ])
+        
 # ============================================================
 
-# ENTRENAMIENTO Y R² TEST 
+# ENTRENAMIENTO Y R² TEST Composicion 
 # ============================================================
 rf.fit(X_train, y_train)
 r2_test = rf.score(X_test, y_test)
 print(f"R² (test): {r2_test:.4f}")
 
+# ENTRENAMIENTO Y R² TEST descriptores
+# ============================================================
+rf_desc.fit(X_train_desc, y_train_desc)
+r2_test_desc = rf_desc.score(X_test_desc, y_test_desc)
+print(f"R² (test descp): {r2_test_desc:.4f}")
+
 # Predicciones 
 y_pred_train = rf.predict(X_train)
 y_pred_test  = rf.predict(X_test)
 
-#GRAFICOS DE PARIDAD Y RESIDUALES 
-#=============================================================
+y_pred_train_desc = rf_desc.predict(X_train_desc)
+y_pred_test_desc = rf_desc.predict(X_test_desc)
 
-# FSC.mostrar_resultados(y_train, y_pred_train, "train")
-# FSC.mostrar_resultados(y_test,  y_pred_test,  "test")
+
 
 
 
 # === NUEVO: filtrar y graficar solo los "buenos" ===
 # 6) Filtrar “mejores” por tolerancia de error absoluto
-tol = 4  # ajusta a tu criterio
-X_new_tr, y_new_tr, _ = FSC.Filtro_mejores(X_train, y_train, y_pred_train, tol)
-X_new_te, y_new_te, _ = FSC.Filtro_mejores(X_test,  y_test,  y_pred_test,  tol)
+tol = 5  # ajusta a tu criterio
+X_new_tr, y_new_tr, _, idx_good_tr = FSC.Filtro_mejores(X_train, y_train, y_pred_train, tol)
+X_new_te, y_new_te, _ , idx_good_te= FSC.Filtro_mejores(X_test,  y_test,  y_pred_test,  tol)
+
+# Filtras descriptores usando ESOS MISMOS índices
+X_new_tr_desc = X_train_desc.iloc[idx_good_tr]
+y_new_tr_desc = y_train_desc.iloc[idx_good_tr]
+
+X_new_te_desc = X_test_desc.iloc[idx_good_te]
+y_new_te_desc = y_test_desc.iloc[idx_good_te]
 
 # 7) Unir y reentrenar desde cero
 X_retrain = pd.concat([X_new_tr, X_new_te], axis=0).reset_index(drop=True)
 y_retrain = pd.concat([y_new_tr, y_new_te], axis=0).reset_index(drop=True)
+
+X_retrain_desc = pd.concat([X_new_tr_desc, X_new_te_desc], axis=0)
+y_retrain_desc = pd.concat([y_new_tr_desc, y_new_te_desc], axis=0)
 
 rf2 = clone(rf)               # nuevo modelo “en blanco”
 rf2.fit(X_retrain, y_retrain) # reentrenado SOLO con “mejores”
 score_r2=rf2.score(X_retrain,y_retrain)
 print(f"R² (retrain): {score_r2:.4f}")
 
+rf_desc2 = clone(rf_desc)
+rf_desc2.fit(X_retrain_desc, y_retrain_desc)
+print("R2 retrain desc:", rf_desc2.score(X_retrain_desc, y_retrain_desc))
+
 y_new_pred = rf2.predict(X_retrain)
+y_new_pred_des = rf_desc2.predict(X_retrain_desc)
 
 # FSC.histograma(y_new_pred)
 print(max(y_new_pred))
 
-#FSC.mostrar_resultados(y_retrain, y_new_pred,"retrain")
+
 
 print(type(X_train))
 print(X_train.shape)
 print(len(X_train.columns))
 print(X_train.columns[:10])
+#joblib.dump(rf2,"models/rf_model.pkl")
+#X_retrain.to_csv("data/X_data_clean.csv", index=False)
+#y_retrain.to_csv("data/y_data_clean.csv", index=False)
+joblib.dump(X_new_tr, "data/X_train.pkl")
+joblib.dump(X_new_te, "data/X_test.pkl")
+joblib.dump(y_new_tr, "data/y_train.pkl")
+joblib.dump(y_new_te, "data/y_test.pkl")
+sys.exit()
 
-domain = ID.build_domain_from_dataset(X_train,
-                                    q=0.995,
-                                    min_frac_active=0.015,
-                                    max_active_quantile=0.95,
-                                    k_nn=10)
-
-print("N elementos:", len(domain.elements))
-print("Ejemplo columnas:", domain.elements[:10])
-print("max_active (aprendido):", domain.max_active)
-
-# Para entender qmax (los máximos razonables)
-qmax_series = pd.Series(domain.qmax, index=domain.elements).sort_values(ascending=False)
-print("\nTop 15 qmax:")
-print(qmax_series.head(15).round(3))
-
-# Para entender cuántos activos suelen ocurrir
-counts = (X_train.to_numpy() >= domain.min_frac_active).sum(axis=1)
-print("\nConteo de activos (quantiles):", np.quantile(counts, [0.5, 0.75, 0.9, 0.95, 0.99]))
-
-v = np.random.rand(85) * 2 - 0.5  # valores con negativos
-x = ID.project_to_simplex(v)
-x2 = ID.sparsify_and_renorm(x, 0.01)
-
-print("sum x:", x.sum(), "min x:", x.min())
-print("sum x2:", x2.sum(), "activos x2:", (x2 >= 0.01).sum())
-
-Tc_target = 120.0
-obj_dbg = ID.make_objective_rf_debug(rf2, domain, Tc_target)
-
-x0 = np.random.rand(85)
-J0, terms0, x_phys = obj_dbg(x0)
-
-print("J0 =", J0)
-print(terms0)
-
-# ver los elementos más importantes de la composición
-s = pd.Series(x_phys, index=domain.elements).sort_values(ascending=False)
-print("\nTop elementos:")
-print(s.head(10).round(4))
-
-
-
-from scipy.optimize import differential_evolution
-
-# -----------------------------
-Tc_target = 120.0
-obj = ID.make_objective_rf(
-    rf_model=rf2,
-    domain=domain,
-    Tc_target=Tc_target,
-    tol=5.0,
-    w_T=1.0,
-    w_qmax=20.0,
-    w_active=2.0,
-    w_nn=2.0
-)
-
-print("obj es:", obj)
-print("callable(obj)?", callable(obj))
-print("prueba obj(x):", obj(np.random.rand(len(domain.elements))))
-
-# 4) OPTIMIZACIÓN INVERSA (⬅️ AQUÍ VA TU BLOQUE)
-# -----------------------------------------------
-bounds = [(0.0, 1.0)] * len(domain.elements)
-
-res = differential_evolution(
-    obj,
-    bounds=bounds,
-    maxiter=60,
-    popsize=20,
-    mutation=(0.5, 1.0),
-    recombination=0.7,
-    polish=True,
-    seed=42,
-    disp=True,
-    workers=1,          # <- fuerza serial
-    updating="immediate" # <- recomendado cuando workers=1
-)
-
-# 5) Post-procesado del mejor candidato
-# -------------------------------------
-x_best = ID.project_to_simplex(res.x)
-x_best = ID.sparsify_and_renorm(x_best, domain.min_frac_active)
-
-Tc_best = float(
-    rf2.predict(pd.DataFrame([x_best], columns=domain.elements))[0]
-)
-
-print("\nBest J:", res.fun)
-print("Tc_hat:", Tc_best)
-print("Activos:", int((x_best >= domain.min_frac_active).sum()))
-
-top = pd.Series(x_best, index=domain.elements).sort_values(ascending=False)
-print("\nTop 10 elementos:")
-print(top.head(10).round(4))
