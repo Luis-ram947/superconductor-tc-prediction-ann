@@ -5,34 +5,81 @@ Created on Wed Oct  1 14:06:23 2025
 @author: giorn
 """
 
-#Funciones para el Pretratamiento de los Superconductores 
+"""
+Utility functions for preprocessing, feature generation, visualization,
+and post-analysis of superconductor composition datasets.
+
+This module includes:
+- composition normalization
+- duplicate removal
+- filtering of best predictions
+- descriptor generation with matminer
+- visualization of Tc distributions and model performance
+- chemical-space analysis with PCA and UMAP
+"""
+
+# =========================
+# Standard scientific stack
+# =========================
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt    # gráficos
+import matplotlib.pyplot as plt
+
+# =========================
+# Materials informatics
+# =========================
 from pymatgen.core import Composition
 from matminer.featurizers.composition import ElementProperty
+
+# =========================
+# Machine learning utilities
+# =========================
 from sklearn.neighbors import NearestNeighbors
-import ast
 from sklearn.decomposition import PCA
+
+# =========================
+# Miscellaneous
+# =========================
+import ast
 import umap
 
+
+# ==========================================
+# DATA PREPROCESSING AND COMPOSITION HANDLING
+# ==========================================
+
+
 def Normalizar (csv_name,skip_zero=True):
-    
     """
-    se puede cambiar para trabajar con X y y desep el principio
+    Load a dataset from CSV and normalize the compositional inputs row-wise.
+
+    Parameters
+    ----------
+    csv_name : str
+        Path to the CSV file. All columns except the last one are assumed
+        to be compositional inputs, and the last column is the target.
+    skip_zero : bool, optional
+        If True, rows with zero total composition are removed before
+        normalization.
+
+    Returns
+    -------
+    Xn : pandas.DataFrame
+        Row-wise normalized compositional input matrix.
+    y : pandas.Series
+        Target variable.
+    df : pandas.DataFrame
+        Original loaded dataframe.
     """
-    
-    """
-    Esta funcion recive un data frame de pandas en donde las n-1 columnas son las entradas 
-    y la columna n son las salidas 
-    """
-    #Leer el documento con los datos 
+    # Load dataset
     df = pd.read_csv(csv_name, index_col=0)
     R,C=df.shape #Dimensiones de la matriz
     
-    X = df.iloc[:,0:-1].abs().fillna(0.0)   # Entradas 
-    y = df.iloc[:,-1]     # Salidas 
+    # Separate compositional inputs and target
+    X = df.iloc[:,0:-1].abs().fillna(0.0)    
+    y = df.iloc[:,-1]     
     
+    # Normalize each row so that compositions sum to 1
     sums = X.sum(axis=1) #axis = 1 suma las columnas 
     if skip_zero :
         mask = sums >0 # True si sums es mayor a cero y false si sums es cero o menor
@@ -47,18 +94,61 @@ def Normalizar (csv_name,skip_zero=True):
 
     
 def Eliminar_Comp_repetidas (X,y,keep="first"):
-    # hago una copia para no trabajar con los datos originales
+    """
+    Remove duplicated compositions after rounding.
+
+    Parameters
+    ----------
+    X : pandas.DataFrame
+        Compositional input matrix.
+    y : pandas.Series or array-like
+        Target values associated with X.
+    keep : {"first", "last"}, optional
+        Which duplicate entry to keep.
+
+    Returns
+    -------
+    X_c : pandas.DataFrame
+        Deduplicated compositions.
+    y_c : pandas.Series
+        Target values after duplicate removal.
+    """
     df = X.copy()
-    # Lo combiente en una serie si no es asi 
+
     df["__y__"] = y.values if isinstance(y, pd.Series) else y
-    df = df.round(8).drop_duplicates(keep=keep)   # redondea y elimina Renglones duplicados
-    X_c = df.drop(columns="__y__") #Elimina la columna y
-    y_c = df["__y__"].reset_index(drop=True) #Solo contiene la columna y
+
+    # Round compositions to reduce floating-point duplication issues
+    df = df.round(8).drop_duplicates(keep=keep)  
+    X_c = df.drop(columns="__y__") #drop y columns
+    y_c = df["__y__"].reset_index(drop=True) 
     return X_c,y_c
     
     
 def Filtro_mejores (X,y_real,y_pred,tol,return_pandas=True,return_index=True):
-    # Convertir a arrays para calcular la máscara por posición
+    """
+    Filter samples whose prediction error is within a given tolerance.
+
+    Parameters
+    ----------
+    X : pandas.DataFrame or ndarray
+        Input samples.
+    y_real : pandas.Series or ndarray
+        True target values.
+    y_pred : ndarray
+        Predicted target values.
+    tol : float
+        Absolute error tolerance.
+    return_pandas : bool, optional
+        If True and X is a DataFrame, return pandas objects.
+    return_index : bool, optional
+        If True, also return the selected positional indices.
+
+    Returns
+    -------
+    X_best, y_best, y_best_p [, pos_best]
+        Filtered samples, true values, predicted values, and optionally indices.
+    """
+    # Convert to arrays to calculate the mask by position
     X_is_df = isinstance(X, pd.DataFrame)
     y_is_series = isinstance(y_real, pd.Series)
 
@@ -66,15 +156,17 @@ def Filtro_mejores (X,y_real,y_pred,tol,return_pandas=True,return_index=True):
     y_arr = y_real.values if y_is_series else np.asarray(y_real)
     ypred_arr = np.asarray(y_pred)
 
-    # Verificaciones rápidas
+    # Quick checks
     if ypred_arr.shape[0] != X_arr.shape[0] or y_arr.shape[0] != X_arr.shape[0]:
         raise ValueError("Dimensiones no coinciden entre X, y_real y y_pred.")
 
-    # Máscara por posición
+    # mask by position
     mask = np.abs(y_arr - ypred_arr) <= tol
 
-    # POSICIONES (enteros) dentro del split
+    
     pos_best = np.where(mask)[0]
+
+    # Select samples whose absolute prediction error is below the tolerance
 
     if return_pandas and X_is_df:
         X_best = X.iloc[pos_best]
@@ -93,10 +185,29 @@ def Filtro_mejores (X,y_real,y_pred,tol,return_pandas=True,return_index=True):
 
     
 def composition_to_for(row,tol = 1e-6):
+    """
+    Convert a compositional row into a pymatgen Composition object.
+
+    Small fractions below `tol` are ignored.
+    """
     For_composition = { el:frac for el, frac in row.items() if frac > tol }
     return Composition(For_composition)
 
 def X_descriptor (df):
+    """
+    Generate Magpie composition-based descriptors using matminer.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing a 'composition' column with pymatgen
+        Composition objects.
+
+    Returns
+    -------
+    X_desc : pandas.DataFrame
+        Descriptor matrix excluding the original composition column.
+    """
     ep = ElementProperty.from_preset("magpie")
     df_feat = ep.featurize_dataframe(
         df,
@@ -107,8 +218,17 @@ def X_descriptor (df):
     return X_desc
 
 
-#  ---------------------------Funciones de resultados ---------------------------------------------
+
+# =========================
+# VISUALIZATION AND METRICS
+# =========================
+
+
+
 def histograma(y,a,b,ylabel = ""):
+    """
+    Plot a histogram of the target variable.
+    """
     plt.figure()
     plt.hist(y, bins=a, alpha=b)
     plt.xlabel(ylabel); plt.ylabel("Frecuencia")
@@ -117,9 +237,16 @@ def histograma(y,a,b,ylabel = ""):
 
 def residuos(y_true, y_pred, titulo="Conjunto"):
     """
-    Esta funcion recibe los datos reales y las predicciones y grafica
-    1- la grafica de paridad 
-    2- la frecuencia de los residulales 
+    Plot the residual distribution for model predictions.
+
+    Parameters
+    ----------
+    y_true : array-like
+        True target values.
+    y_pred : array-like
+        Predicted target values.
+    titulo : str, optional
+        Plot title suffix.
     """
 
     resid = y_pred - y_true
@@ -140,13 +267,11 @@ def residuos(y_true, y_pred, titulo="Conjunto"):
 
 
 def Paridad(y_true, y_pred, titulo="Conjunto"):
-
     """
-    Esta funcion recibe los datos reales y las predicciones y grafica
-    1- la grafica de paridad 
-    2- la frecuencia de los residulales 
-    """
+    Plot a parity plot comparing true and predicted Tc values.
 
+    Also prints the first 15 samples for quick inspection.
+    """
     resid = y_pred - y_true
 
     posicion = np.arange(len(y_true))
@@ -172,6 +297,9 @@ def Paridad(y_true, y_pred, titulo="Conjunto"):
 
 
 def grafica_y_ordenada(y, titulo="Valores de y ordenados"):
+    """
+    Plot the sorted target values to inspect their distribution.
+    """
     
     y = np.asarray(y).ravel()
     y_sorted = np.sort(y)
@@ -189,6 +317,9 @@ def grafica_y_ordenada(y, titulo="Valores de y ordenados"):
    
 
 def comportamiento_con_error(y_true, y_pred):
+    """
+    Plot sorted true and predicted values together with an absolute-error band.
+    """
     
     y_true = np.asarray(y_true).ravel()
     y_pred = np.asarray(y_pred).ravel()
@@ -218,55 +349,15 @@ def comportamiento_con_error(y_true, y_pred):
     
     plt.title("Comportamiento del modelo")
 
-# def heatmap_elementos_tc(X, y, bins_tc=None, umbral=1e-6, titulo="Frecuencia de elementos por rango de Tc"):
-#     """
-#     X: DataFrame con fracciones atómicas (columnas = elementos)
-#     y: Series o array con Tc
-#     bins_tc: lista de bordes de bins, por ejemplo [0,20,40,60,80,100,150]
-#     umbral: valor mínimo para considerar que un elemento 'aparece'
-#     """
-    
-#     X = X.copy()
-#     y = pd.Series(np.asarray(y).ravel(), index=X.index)
 
-#     if bins_tc is None:
-#         bins_tc = [0, 20, 40, 60, 80, 100, 150]
-
-#     # Categorías de Tc
-#     grupos_tc = pd.cut(y, bins=bins_tc, include_lowest=True)
-
-#     elementos = X.columns.tolist()
-#     etiquetas_bins = [str(cat) for cat in grupos_tc.cat.categories]
-
-#     matriz = pd.DataFrame(0.0, index=elementos, columns=etiquetas_bins)
-
-#     for cat in grupos_tc.cat.categories:
-#         idx = grupos_tc == cat
-#         X_bin = X.loc[idx]
-
-#         if len(X_bin) == 0:
-#             continue
-
-#         # Frecuencia relativa de aparición del elemento en ese bin
-#         freq = (X_bin > umbral).sum(axis=0) / len(X_bin)
-#         matriz.loc[:, str(cat)] = freq.values
-
-#     plt.figure(figsize=(10, 12))
-#     im = plt.imshow(matriz.values, aspect='auto', origin='lower')
-
-#     plt.xticks(range(len(matriz.columns)), matriz.columns, rotation=45)
-#     plt.yticks(range(len(matriz.index)), matriz.index)
-#     plt.xlabel("Rango de Tc (K)")
-#     plt.ylabel("Elemento")
-#     plt.title(titulo)
-#     plt.colorbar(im, label="Frecuencia de aparición")
-
-#     plt.tight_layout()
+# ==================================
+# CHEMICAL SPACE AND ELEMENT ANALYSIS
+# ==================================
     
 
-#     return matriz
-    
+
 def superficie_3D(matriz):
+
 
     Z = matriz.values
 
@@ -297,13 +388,24 @@ def heatmap_elementos_tc(
         umbral=1e-6,
         top_n=None,
         titulo="Frecuencia de elementos por rango de Tc"):
-
     """
-    X: DataFrame con fracciones atómicas (columnas = elementos)
-    y: Series o array con Tc
-    bins_tc: bins de temperatura
-    umbral: fracción mínima para considerar presencia
-    top_n: número de elementos más frecuentes a mostrar
+    Plot a heatmap showing the relative frequency of element occurrence
+    across Tc intervals.
+
+    Parameters
+    ----------
+    X : pandas.DataFrame
+        Composition matrix with elements as columns.
+    y : array-like
+        Critical temperature values.
+    bins_tc : list, optional
+        Temperature bin edges.
+    umbral : float, optional
+        Minimum fraction required to consider an element present.
+    top_n : int, optional
+        If given, only the most frequent elements are displayed.
+    titulo : str, optional
+        Plot title.
     """
 
     X = X.copy()
@@ -312,10 +414,7 @@ def heatmap_elementos_tc(
     if bins_tc is None:
         bins_tc = [0, 20, 40, 60, 80, 100, 140]
 
-    # --------------------------------
-    # seleccionar elementos más frecuentes
-    # --------------------------------
-
+    # Select most frequent elements if requested
     if top_n is not None:
 
         frecuencia_global = (X > umbral).sum(axis=0)
@@ -329,9 +428,7 @@ def heatmap_elementos_tc(
 
         X = X[top_elementos]
 
-    # --------------------------------
-    # dividir por rangos de Tc
-    # --------------------------------
+    # Split samples by Tc ranges
 
     grupos_tc = pd.cut(y, bins=bins_tc, include_lowest=True)
 
@@ -339,10 +436,8 @@ def heatmap_elementos_tc(
     etiquetas_bins = [str(cat) for cat in grupos_tc.cat.categories]
 
     matriz = pd.DataFrame(0.0, index=elementos, columns=etiquetas_bins)
-
-    # --------------------------------
-    # construir matriz
-    # --------------------------------
+    
+    # Compute relative element frequency within each Tc bin
 
     for cat in grupos_tc.cat.categories:
 
@@ -356,9 +451,6 @@ def heatmap_elementos_tc(
 
         matriz.loc[:, str(cat)] = freq.values
 
-    # --------------------------------
-    # graficar
-    # --------------------------------
 
     plt.figure(figsize=(10, 8))
 
@@ -389,9 +481,7 @@ def heatmap_elementos_tc(
 def frecuencia_elementos(X, umbral=1e-6, top_n=None, titulo="Frecuencia de aparición de elementos"):
     
     """
-    X: DataFrame de composiciones (columnas = elementos)
-    umbral: fracción mínima para considerar que el elemento aparece
-    top_n: mostrar solo los N más frecuentes
+    Compute and plot the occurrence frequency of elements in the dataset.
     """
     
     # contar apariciones
@@ -423,6 +513,10 @@ def frecuencia_elementos(X, umbral=1e-6, top_n=None, titulo="Frecuencia de apari
     return freq
 
 def calcular_knn(X_dataset, X_candidates, k=5):
+    """
+    Compute k-nearest-neighbor distances from candidate compositions
+    to the reference dataset in composition space.
+    """
 
     knn = NearestNeighbors(n_neighbors=k)
     knn.fit(X_dataset)
@@ -433,27 +527,29 @@ def calcular_knn(X_dataset, X_candidates, k=5):
 
 def composiciones_a_matriz_y_formula(df_candidatos, columnas_elementos, col_comp="composition", decimales_formula=3):
     """
-    Convierte la columna 'composition' de un DataFrame a:
-    1) matriz numérica compatible con X del dataset
-    2) columna de fórmula química
-    
-    Parámetros
+
+    Convert a composition column stored as dictionaries into:
+    1) a numerical matrix aligned with the original dataset columns
+    2) a human-readable chemical formula string
+
+    Parameters
     ----------
     df_candidatos : pd.DataFrame
-        Debe contener una columna tipo string con diccionarios de composición.
-    columnas_elementos : list o pd.Index
-        Columnas del dataset original, en el orden correcto.
+        DataFrame that must contain a column with composition dictionaries
+        stored as strings.
+    columnas_elementos : list or pd.Index
+        Columns of the original dataset in the correct order.
     col_comp : str
-        Nombre de la columna con la composición.
+        Name of the column containing the composition.
     decimales_formula : int
-        Número de decimales para la fórmula química.
+        Number of decimal places used when constructing the chemical formula.
 
-    Retorna
+    Returns
     -------
     X_candidates : np.ndarray
-        Matriz numérica de composiciones.
+        Numerical matrix of compositions.
     df_out : pd.DataFrame
-        Copia del DataFrame original con columnas nuevas:
+        Copy of the original DataFrame with additional columns:
         - formula
     """
 
@@ -493,6 +589,9 @@ def composiciones_a_matriz_y_formula(df_candidatos, columnas_elementos, col_comp
     return X_candidates, df_out
 
 def PCA_graf (x_p, X_candidates):
+    """
+    Project dataset and candidate compositions into a 2D PCA space.
+    """
     pca = PCA(n_components=2)
     X_pca = pca.fit_transform(x_p.to_numpy())
     X_candidates_pca = pca.transform(X_candidates)
@@ -528,6 +627,27 @@ def umap_dataset_y_candidatos(
     min_dist=0.05,
     titulo="UMAP del espacio químico"
 ):
+    """
+    Fit a UMAP representation on the reference dataset and project
+    candidate compositions into the same embedding.
+
+    Parameters
+    ----------
+    X_dataset : array-like
+        Reference composition matrix.
+    y_dataset : array-like
+        Tc values used only for coloring the dataset points.
+    X_candidates : array-like
+        Candidate composition matrix.
+    df_candidatos : pandas.DataFrame, optional
+        Candidate dataframe to which UMAP coordinates will be appended.
+    n_neighbors : int, optional
+        UMAP local neighborhood size.
+    min_dist : float, optional
+        UMAP minimum distance parameter.
+    titulo : str, optional
+        Plot title.
+    """
     
     reducer = umap.UMAP(
         n_neighbors=n_neighbors,
@@ -552,7 +672,8 @@ def umap_dataset_y_candidatos(
     plt.scatter(
         X_candidates_umap[:, 0],
         X_candidates_umap[:, 1],
-        s=130,
+        s=30,
+        c="red",
         marker="o",
         label="GA candidates"
     )
